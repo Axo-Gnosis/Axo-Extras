@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.89"
+repository = "https://git.ryot.foo/toph/Axo-Extras"
+
+[workspace.dependencies]
+# The rev must equal the host's axo rev, or Cargo builds two `axo-ai` crates.
+axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "7fa38c1" }
+# Versions and features match axo's `[workspace.dependencies]`.
+async-trait = "0.1.92"
+base64 = "0.23.1"
+futures = "0.3.34"
+rand = "0.10.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "json", "http2", "form"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.1"
+tempfile = "3.27.0"
+tokio-util = "0.7.20"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util", "io-std", "process"] }
+tracing = "0.1.44"
+url = "2.5.8"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

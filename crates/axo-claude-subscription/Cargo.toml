@@ -1,0 +1,27 @@
+[package]
+name = "axo-claude-subscription"
+version = "0.0.0"
+description = "Claude subscription provider for axo: OAuth login, first-party models and the subscription transport"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axo-ai.workspace = true
+base64.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+axo-ai = { workspace = true, features = ["testing"] }
+futures.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

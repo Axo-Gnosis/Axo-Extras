@@ -1,0 +1,30 @@
+[package]
+name = "axo-codex"
+version = "0.0.0"
+description = "ChatGPT Codex provider for axo: OAuth login, the account's model list and the Codex transport"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axo-ai.workspace = true
+base64.workspace = true
+futures.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+axo-ai = { workspace = true, features = ["testing"] }
+axo-claude-subscription = { path = "../axo-claude-subscription" }
+tokio-util.workspace = true
+
+[lints]
+workspace = true
