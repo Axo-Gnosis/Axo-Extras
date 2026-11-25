@@ -23,7 +23,7 @@ url.workspace = true
 
 [dev-dependencies]
 axo-ai = { workspace = true, features = ["testing"] }
-axo-claude-subscription = { path = "../axo-claude-subscription" }
+axo-anthropic-auth = { path = "../axo-anthropic-auth" }
 tokio-util.workspace = true
 
 [lints]

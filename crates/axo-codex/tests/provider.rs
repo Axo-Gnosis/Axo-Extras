@@ -48,6 +48,7 @@ async fn stream(
                 },
                 rewrite: None,
                 transport: provider.transport,
+                observe: None,
             },
             CancellationToken::new(),
         )

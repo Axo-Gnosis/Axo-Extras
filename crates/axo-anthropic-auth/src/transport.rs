@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::{BASE_URL, PROVIDER};
 
 const SUBSCRIPTION_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-const OAUTH_BETA: &str = "oauth-2025-04-20";
+pub(crate) const OAUTH_BETA: &str = "oauth-2025-04-20";
 /// The request headers the subscription endpoint receives; every other one is dropped.
 const ALLOWED_HEADERS: [&str; 5] = [
     "anthropic-version",
@@ -19,12 +19,12 @@ const ALLOWED_HEADERS: [&str; 5] = [
     "anthropic-dangerous-direct-browser-access",
 ];
 
-pub(crate) struct SubscriptionTransport {
+pub(crate) struct AnthropicAuthTransport {
     pub(crate) http: reqwest::Client,
 }
 
 #[async_trait]
-impl ProviderTransport for SubscriptionTransport {
+impl ProviderTransport for AnthropicAuthTransport {
     async fn send(
         &self,
         _model: &Model,

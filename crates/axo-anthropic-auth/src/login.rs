@@ -31,11 +31,11 @@ pub(crate) fn client() -> Result<reqwest::Client, Error> {
         .map_err(|_| failure("client", "initialization failed"))
 }
 
-pub(crate) struct ClaudeSubscriptionLogin {
+pub(crate) struct AnthropicAuthLogin {
     http: reqwest::Client,
 }
 
-impl ClaudeSubscriptionLogin {
+impl AnthropicAuthLogin {
     pub(crate) fn new(http: reqwest::Client) -> Self {
         Self { http }
     }
@@ -110,7 +110,7 @@ impl ClaudeSubscriptionLogin {
 }
 
 #[async_trait]
-impl ProviderLogin for ClaudeSubscriptionLogin {
+impl ProviderLogin for AnthropicAuthLogin {
     async fn login(&self, interaction: &dyn LoginInteraction) -> Result<Credential, Error> {
         self.authorize(interaction, Instant::now() + LOGIN_TIMEOUT)
             .await
@@ -254,7 +254,7 @@ mod tests {
     };
 
     #[test]
-    fn claude_subscription_authorization_state_and_callback() {
+    fn anthropic_auth_authorization_state_and_callback() {
         let deadline = Instant::now() + LOGIN_TIMEOUT;
         for input in [
             "code#state".to_owned(),
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_subscription_expiry_and_refresh_rotation() {
+    fn anthropic_auth_expiry_and_refresh_rotation() {
         let payload =
             json!({"access_token":"access", "refresh_token":"rotated", "expires_in":3600});
         let Credential::Oauth {
@@ -389,13 +389,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claude_subscription_invalid_state_rejected_before_exchange() {
+    async fn anthropic_auth_invalid_state_rejected_before_exchange() {
         // A test-only dead proxy prevents external traffic even if validation regresses.
         let http = reqwest::Client::builder()
             .proxy(reqwest::Proxy::all("http://127.0.0.1:0").unwrap())
             .build()
             .unwrap();
-        let login = ClaudeSubscriptionLogin::new(http);
+        let login = AnthropicAuthLogin::new(http);
         for reply in ["secret-code", "secret-code#wrong-state"] {
             let ui = HangingUi {
                 reply: Some(reply),
@@ -408,8 +408,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claude_subscription_expiration_covers_async_ui() {
-        let login = ClaudeSubscriptionLogin::new(client().unwrap());
+    async fn anthropic_auth_expiration_covers_async_ui() {
+        let login = AnthropicAuthLogin::new(client().unwrap());
         for hang_open in [false, true] {
             let ui = HangingUi {
                 hang_open,
@@ -423,7 +423,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claude_subscription_cancelled_login_drops_prompt_without_store() {
+    async fn anthropic_auth_cancelled_login_drops_prompt_without_store() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(FileCredentialStore::new(dir.path().join("auth.json")));
         let models = Models::load(ModelsOptions {
@@ -454,7 +454,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claude_subscription_client_does_not_follow_redirects() {
+    async fn anthropic_auth_client_does_not_follow_redirects() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());

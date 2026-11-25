@@ -7,6 +7,7 @@ use std::sync::Arc;
 mod login;
 mod models;
 mod transport;
+mod usage;
 
 /// The provider id.
 pub const PROVIDER: &str = "openai-codex";
@@ -25,6 +26,7 @@ pub fn provider(http: reqwest::Client) -> axo_ai::Provider {
         login: Some(Arc::new(login::CodexLogin::new(http.clone()))),
         rewrite: None,
         transport: Some(Arc::new(transport::CodexTransport { http: http.clone() })),
-        list_models: Some(Arc::new(models::CodexModels { http })),
+        list_models: Some(Arc::new(models::CodexModels { http: http.clone() })),
+        usage: Some(Arc::new(usage::CodexUsage { http })),
     }
 }

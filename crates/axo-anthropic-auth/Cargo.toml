@@ -1,5 +1,5 @@
 [package]
-name = "axo-claude-subscription"
+name = "axo-anthropic-auth"
 version = "0.0.0"
 description = "Claude subscription provider for axo: OAuth login, first-party models and the subscription transport"
 edition.workspace = true
@@ -11,9 +11,11 @@ repository.workspace = true
 async-trait.workspace = true
 axo-ai.workspace = true
 base64.workspace = true
+jiff.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 url.workspace = true

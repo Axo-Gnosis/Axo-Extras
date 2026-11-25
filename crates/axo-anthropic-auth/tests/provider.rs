@@ -49,10 +49,7 @@ async fn listing_keeps_first_party_messages_rows_unpriced_and_capped() {
         ),
     ]
     .into();
-    let list = axo_claude_subscription::provider()
-        .unwrap()
-        .list_models
-        .unwrap();
+    let list = axo_anthropic_auth::provider().unwrap().list_models.unwrap();
     let listed = list
         .list(ModelsRequest {
             auth: None,
@@ -65,7 +62,7 @@ async fn listing_keeps_first_party_messages_rows_unpriced_and_capped() {
         panic!("{listed:?}");
     };
     assert_eq!(model.id, "first-party");
-    assert_eq!(model.provider, axo_claude_subscription::PROVIDER);
+    assert_eq!(model.provider, axo_anthropic_auth::PROVIDER);
     assert_eq!(model.cost, None);
     assert!(model.service_tiers.is_empty());
     assert_eq!(model.compat.tool_name_prefix.as_deref(), Some("_"));

@@ -211,8 +211,24 @@ async fn credential_from_response(
     })
 }
 
-/// The ChatGPT account id claim of the access token (a JWT).
+/// The ChatGPT account id claim of the access token.
 pub(crate) fn account_id(token: &str) -> Option<String> {
+    claims(token)?[JWT_CLAIM_PATH]["chatgpt_account_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// The email claim of the access token.
+pub(crate) fn email(token: &str) -> Option<String> {
+    claims(token)?["https://api.openai.com/profile"]["email"]
+        .as_str()
+        .map(|email| email.trim().to_lowercase())
+        .filter(|email| !email.is_empty())
+}
+
+/// The claims of the access token (a JWT), unverified.
+fn claims(token: &str) -> Option<Value> {
     let mut parts = token.split('.');
     parts.next()?;
     let payload = parts.next()?;
@@ -221,11 +237,7 @@ pub(crate) fn account_id(token: &str) -> Option<String> {
         return None;
     }
     let payload = URL_SAFE_PAD_INDIFFERENT.decode(payload).ok()?;
-    let claims: Value = serde_json::from_slice(&payload).ok()?;
-    claims[JWT_CLAIM_PATH]["chatgpt_account_id"]
-        .as_str()
-        .filter(|id| !id.is_empty())
-        .map(str::to_owned)
+    serde_json::from_slice(&payload).ok()
 }
 
 /// Splits pasted login input into `(code, state)`: a full redirect URL, `code#state`, a query

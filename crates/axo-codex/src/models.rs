@@ -176,15 +176,16 @@ struct RowTier {
     id: String,
 }
 
-/// The account's listed models; hidden ones and rows without a context window are skipped.
-async fn discover(http: &reqwest::Client, auth: ModelAuth) -> Result<Vec<CodexRow>, Error> {
+/// The ChatGPT backend base and headers for an account request (model list, usage). Later
+/// layers win, as for inference requests.
+pub(crate) fn account_request(auth: ModelAuth) -> Result<(String, HeaderMap), Error> {
     let base = auth.base_url.as_deref().unwrap_or(BASE_URL);
     let base = base.trim_end_matches('/');
     let base = base
         .strip_suffix("/codex/responses")
         .or_else(|| base.strip_suffix("/codex"))
-        .unwrap_or(base);
-    // Later layers win, as for inference requests.
+        .unwrap_or(base)
+        .to_owned();
     let token = auth.api_key.unwrap_or_default();
     let mut headers = HeaderMap::new();
     for (name, value) in [("originator".to_owned(), "axo".to_owned())]
@@ -200,6 +201,12 @@ async fn discover(http: &reqwest::Client, auth: ModelAuth) -> Result<Vec<CodexRo
                 .map_err(|_| Error::Config(format!("invalid value for header {name}")))?,
         );
     }
+    Ok((base, headers))
+}
+
+/// The account's listed models; hidden ones and rows without a context window are skipped.
+async fn discover(http: &reqwest::Client, auth: ModelAuth) -> Result<Vec<CodexRow>, Error> {
+    let (base, headers) = account_request(auth)?;
     let list: ModelList = http
         .get(format!(
             "{base}/codex/models?client_version={CLIENT_VERSION}"

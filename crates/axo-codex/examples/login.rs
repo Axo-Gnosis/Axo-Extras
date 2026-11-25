@@ -1,9 +1,11 @@
 //! Provider login through `Models::login` with both Axo-Extras providers registered: prints
 //! what the login asks for and answers prompts from stdin. For `openai-codex` it prints the
 //! authorize URL, then completes on the local callback or on a redirect URL / code pasted
-//! into stdin; for `anthropic-subscription` it asks for the pasted `code#state`.
+//! into stdin; for `anthropic-auth` it asks for the pasted `code#state`.
 //!
-//! `cargo run -p axo-codex --example login -- --dir <dir> <provider>`
+//! `cargo run -p axo-codex --example login -- --dir <dir> <provider> [--usage]`
+//!
+//! It then prints the account's usage report; `--usage` skips the login and only prints it.
 //!
 //! The credential lands in `<dir>/auth.json` under the `axo-extras` registration's slot.
 
@@ -72,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dir" => dir = args.next().map(PathBuf::from),
+            "--usage" => {}
             _ => provider = Some(arg),
         }
     }
@@ -88,11 +91,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     models.register("axo-extras", axo_codex::provider(reqwest::Client::new()))?;
-    models.register("axo-extras", axo_claude_subscription::provider()?)?;
-    models.login(&provider, &Stdin).await?;
-    println!(
-        "Logged in to {provider}; credentials saved to {}",
-        dir.join("auth.json").display()
-    );
+    models.register("axo-extras", axo_anthropic_auth::provider()?)?;
+    if !std::env::args().any(|arg| arg == "--usage") {
+        models.login(&provider, &Stdin).await?;
+        println!(
+            "Logged in to {provider}; credentials saved to {}",
+            dir.join("auth.json").display()
+        );
+    }
+    println!("{:#?}", models.refresh_usage(&provider).await?);
     Ok(())
 }
