@@ -43,7 +43,8 @@ axo-ai = { path = "../axo/crates/axo-ai" }
 ## Checks
 
 ```sh
-nix develop -c cargo test --workspace
+nix develop -c cargo nextest run --workspace   # fast parallel runner (or `cargo test --workspace`)
+nix develop -c cargo check --workspace --all-targets
 cargo run -p axo-codex --example login -- --dir <dir> openai-codex            # login, then print usage
 cargo run -p axo-codex --example login -- --dir <dir> anthropic-auth --usage   # usage only
 ```

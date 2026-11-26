@@ -46,3 +46,28 @@ all = { level = "warn", priority = -1 }
 # ponytail: drop this once a candle release includes the fix.
 [patch.crates-io]
 candle-core = { git = "https://git.ryot.foo/toph/candle.git", rev = "e2af193fe630f2d86c39fd6f5c9f993d0aa60cdf" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = 0
+
+[profile.dev.package.candle-core]
+opt-level = 2
+
+[profile.dev.package.candle-nn]
+opt-level = 2
+
+[profile.dev.package.candle-transformers]
+opt-level = 2
+
+[profile.dev.package.gemm]
+opt-level = 2
+
+[profile.dev.package.tokenizers]
+opt-level = 2
+
+[profile.dev.package.ring]
+opt-level = 2

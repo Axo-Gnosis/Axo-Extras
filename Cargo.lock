@@ -92,6 +92,7 @@ dependencies = [
 [[package]]
 name = "axo-ai"
 version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=c1b060a5e22e64e84313dd68b99e7eb16dcc2999#c1b060a5e22e64e84313dd68b99e7eb16dcc2999"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
