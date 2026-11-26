@@ -8,7 +8,7 @@ Local predictive text for a prompt editor: completes the word being typed and, w
 ## Host contract
 
 - `complete(before, after)`: pass the one run of typed text holding the caret, split at the caret. Exclude text belonging to file chips, folded pastes and other non-typed parts. The crate applies the caret gate itself (code tokens, paths, command lines, mid-word carets, empty drafts all return `None`).
-- `observe(text)`: call once per typed run of a submitted prompt, off the typing path. `set_model` is also slow (loads 145 MB, consumes the prompt memory); call it off the typing path.
+- `observe(text)` (or `observe_deferred` + `HeadUpdate::compute` + `apply_head` to run the model forward pass off the typing lock): call once per typed run of a submitted prompt, off the typing path. `set_model` is also slow (loads 145 MB, consumes the prompt memory); call it off the typing path.
 - `persist()`: writes only when something was learned; call it periodically and at shutdown.
 - `open` fails on a corrupt or unknown-version snapshot; recover with `reset_dir` and open again.
 - candle-core is patched to a fork in this workspace (see the root README); hosts must carry the same `[patch.crates-io]` line or the language model runs 3–4× slower.
@@ -23,7 +23,15 @@ English only. Next-word suggestions appear only at the end of a line after plain
 
 ## Bench
 
-`cargo run --release -p axo-predict --example replay -- <prompts.json> <models_root> [held=60]` replays held-out prompts keystroke by keystroke and prints latency and match rates. Final gate numbers with the patched candle are still to be recorded here.
+`cargo run --release -p axo-predict --example replay -- <prompts.json> <models_root> [held=60]` replays held-out prompts keystroke by keystroke and prints latency and match rates.
+
+Measured on Ryzen 9 7900X3D (`held=10`, 791 chars, patched candle, `RAYON_NUM_THREADS=4 CANDLE_NUM_THREADS=4`):
+
+| `next_words` | p50 | p90 | p99 | Keystrokes saved |
+|---|---|---|---|---|
+| 0 | 13.8 ms | 47.5 ms | 120.8 ms | 23.3 % |
+| 1 | 26.7 ms | 53.9 ms | 108.7 ms | 26.3 % |
+| 2 | 34.6 ms | 54.1 ms | 85.2 ms | 26.4 % |
 
 ## Attribution
 

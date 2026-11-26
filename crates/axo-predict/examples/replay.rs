@@ -15,7 +15,7 @@
 use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
-use axo_predict::{Options, Predictor, SMOLLM2};
+use axo_predict::{Config, ModelFiles, Options, Predictor, SMOLLM2};
 
 /// Prompts learned with the model loaded before the replay.
 const MEMORY_PROMPTS: usize = 30;
@@ -56,14 +56,19 @@ fn pass(train: &[String], test: &[String], model: &Path, next_words: u8) -> anyh
     let dir = tempfile::tempdir()?;
     let mut predictor = Predictor::open(Options {
         state_dir: dir.path().to_owned(),
+        config: Config {
+            next_words,
+            ..Config::default()
+        },
     })?;
     let (early, recent) = train.split_at(train.len().saturating_sub(MEMORY_PROMPTS));
     early.iter().for_each(|prompt| predictor.observe(prompt));
     let started = Instant::now();
-    predictor.set_model(Some(model)).context("load model")?;
+    predictor
+        .set_model(Some(&ModelFiles::smollm2(model)))
+        .context("load model")?;
     let load = started.elapsed().as_secs_f64();
     recent.iter().for_each(|prompt| predictor.observe(prompt));
-    predictor.set_next_words(next_words);
 
     let mut stats = Stats {
         load,

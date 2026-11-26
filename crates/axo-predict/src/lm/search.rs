@@ -208,11 +208,28 @@ impl Ord for Node {
 ///
 /// # Errors
 /// Propagates model failures from `rows`.
+#[cfg(test)]
 pub fn complete_nbest(
     index: &TokenIndex,
     params: SearchParams,
     target: &str,
     n: usize,
+    rows: &mut impl Rows,
+) -> anyhow::Result<Vec<(String, f32)>> {
+    complete_nbest_filtered(index, params, target, n, |_| false, rows)
+}
+
+/// Like `complete_nbest`, skipping finished suffixes for which `skip` returns
+/// true so the search stops as soon as `n` usable completions are popped.
+///
+/// # Errors
+/// Propagates model failures from `rows`.
+pub fn complete_nbest_filtered(
+    index: &TokenIndex,
+    params: SearchParams,
+    target: &str,
+    n: usize,
+    mut skip: impl FnMut(&str) -> bool,
     rows: &mut impl Rows,
 ) -> anyhow::Result<Vec<(String, f32)>> {
     let mut heap = BinaryHeap::new();
@@ -242,8 +259,8 @@ pub fn complete_nbest(
     let mut expanded = 0;
     let budget = params.max_expand + 4 * n.saturating_sub(1);
     let mut found: Vec<(String, f64)> = Vec::new();
-    let add = |found: &mut Vec<(String, f64)>, out: String, logp: f64| {
-        if !found.iter().any(|(word, _)| *word == out) {
+    let mut add = |found: &mut Vec<(String, f64)>, out: String, logp: f64| {
+        if !skip(&out) && !found.iter().any(|(word, _)| *word == out) {
             found.push((out, logp));
         }
     };

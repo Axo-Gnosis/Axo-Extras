@@ -14,15 +14,86 @@ use std::{
 
 use anyhow::Context as _;
 use gate::Caret;
-use lm::{LanguageModel, NEXT_WORD_THRESHOLD};
+use lm::{
+    DEFAULT_MEMORY_MAX_UNITS, DEFAULT_MEMORY_UNITS, DEFAULT_NEXT_WORD_THRESHOLD, LanguageModel,
+};
 use ngram::NgramPredictor;
 
-pub use lm::SMOLLM2;
+pub use lm::{ModelFiles, SMOLLM2};
 
-/// Where the predictor keeps what it learned.
+/// Host-configurable tuning for [`Predictor`]. [`Default`] holds the tuned
+/// baselines; hosts can override any field at open time or live via
+/// [`Predictor::set_config`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Config {
+    /// Words to suggest beyond the current word, clamped to `0..=2`. Only a
+    /// language model suggests them.
+    pub next_words: u8,
+    /// Minimum confidence (`0.0..=1.0`) to show an n-gram-only word completion.
+    pub ngram_threshold: f32,
+    /// Minimum blended score (`0.0..=1.0`) to show a word completion when a
+    /// language model is loaded.
+    pub blend_threshold: f32,
+    /// Share of the n-gram in the blend (`0.0..=1.0`); the language model gets
+    /// the rest.
+    pub ngram_weight: f32,
+    /// Minimum chained confidence (`0.0..=1.0`) each following word must keep.
+    pub next_word_threshold: f32,
+    /// Target recent-prompt memory in the language model head after a trim, in
+    /// UTF-16 units.
+    pub memory_units: usize,
+    /// Ceiling in UTF-16 units that triggers a trim back to `memory_units`.
+    pub memory_max_units: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            next_words: 1,
+            ngram_threshold: 0.15,
+            blend_threshold: blend::DEFAULT_SHOW_THRESHOLD,
+            ngram_weight: blend::DEFAULT_NGRAM_WEIGHT,
+            next_word_threshold: DEFAULT_NEXT_WORD_THRESHOLD,
+            memory_units: DEFAULT_MEMORY_UNITS,
+            memory_max_units: DEFAULT_MEMORY_MAX_UNITS,
+        }
+    }
+}
+
+/// Deferred language-model head work produced by [`Predictor::observe_deferred`].
+/// Run [`HeadUpdate::compute`] off the typing lock, then install the result with
+/// [`Predictor::apply_head`].
+pub struct HeadUpdate(lm::HeadUpdate);
+
+/// Completed head state returned by [`HeadUpdate::compute`].
+pub struct ComputedHead(lm::ComputedHead);
+
+impl HeadUpdate {
+    /// Runs the language model over the updated prompt memory.
+    ///
+    /// # Errors
+    /// Returns an error when the model forward pass fails.
+    pub fn compute(self) -> Result<ComputedHead, Error> {
+        Ok(ComputedHead(self.0.compute()?))
+    }
+}
+
+/// Where the predictor keeps what it learned and its initial configuration.
 pub struct Options {
     /// Private directory for the learned state; created on first persist.
     pub state_dir: PathBuf,
+    /// Initial tuning parameters.
+    pub config: Config,
+}
+
+impl Options {
+    /// Options for `state_dir` with [`Config::default`].
+    pub fn new(state_dir: PathBuf) -> Self {
+        Self {
+            state_dir,
+            config: Config::default(),
+        }
+    }
 }
 
 /// Text to show after the caret.
@@ -61,7 +132,7 @@ impl From<anyhow::Error> for Error {
 pub struct Predictor {
     ngram: NgramPredictor,
     lm: Option<LanguageModel>,
-    next_words: u8,
+    config: Config,
     /// A language model failure was logged; later ones are not.
     lm_warned: bool,
     state_dir: PathBuf,
@@ -79,29 +150,38 @@ impl Predictor {
     /// # Errors
     /// Returns an error when the saved state cannot be read or decoded.
     pub fn open(options: Options) -> Result<Self, Error> {
+        let mut ngram = NgramPredictor::open(&options.state_dir)?;
+        let config = normalize_config(options.config);
+        ngram.set_show_threshold(config.ngram_threshold);
         Ok(Self {
-            ngram: NgramPredictor::open(&options.state_dir)?,
+            ngram,
             lm: None,
-            next_words: 1,
+            config,
             lm_warned: false,
             state_dir: options.state_dir,
         })
     }
 
-    /// Loads the language model from `model_dir` (see `SMOLLM2`), or unloads it with `None`.
-    /// Slow (reads 145 MB, consumes the prompt memory): call off the typing path.
+    /// Loads a language model from `files` (see [`ModelFiles::smollm2`]), or
+    /// unloads it with `None`.
+    /// Slow (reads weights, consumes the prompt memory): call off the typing path.
     ///
     /// # Errors
     /// Returns an error when the current model's memory cannot be written, or
     /// the new model or its saved memory cannot be loaded; then no model is
     /// loaded.
-    pub fn set_model(&mut self, model_dir: Option<&Path>) -> Result<(), Error> {
+    pub fn set_model(&mut self, files: Option<&ModelFiles>) -> Result<(), Error> {
         if let Some(lm) = &mut self.lm {
             lm.persist()?;
         }
         self.lm = None;
-        if let Some(dir) = model_dir {
-            self.lm = Some(LanguageModel::open(dir, &self.state_dir)?);
+        if let Some(files) = files {
+            self.lm = Some(LanguageModel::open(
+                files,
+                &self.state_dir,
+                self.config.memory_units,
+                self.config.memory_max_units,
+            )?);
         }
         Ok(())
     }
@@ -110,10 +190,19 @@ impl Predictor {
         self.lm.is_some()
     }
 
-    /// Words to suggest beyond the current one, 0..=2 (default 1). Only a
-    /// language model suggests them.
-    pub fn set_next_words(&mut self, words: u8) {
-        self.next_words = words.min(2);
+    /// Updates tuning parameters live without reopening the predictor or model.
+    pub fn set_config(&mut self, config: Config) {
+        let config = normalize_config(config);
+        self.ngram.set_show_threshold(config.ngram_threshold);
+        if let Some(lm) = &mut self.lm {
+            lm.set_memory_limits(config.memory_units, config.memory_max_units);
+        }
+        self.config = config;
+    }
+
+    /// Current configuration.
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// The suggestion for a caret between `before` and `after`, both taken from
@@ -130,17 +219,29 @@ impl Predictor {
             };
         };
         let warned = &mut self.lm_warned;
+        let next_words = self.config.next_words;
+        let next_threshold = self.config.next_word_threshold;
         match caret {
             Caret::Word { before, prefix } => {
                 let ngram = self.ngram.complete(before, prefix);
                 let model = logged(warned, lm.word(before, prefix)).flatten();
-                let pick = blend::blend(ngram, model)?;
+                let pick = blend::blend(
+                    ngram,
+                    model,
+                    self.config.ngram_weight,
+                    self.config.blend_threshold,
+                )?;
                 let mut text = pick.suffix;
                 // Chained confidence only falls, so a weak pick takes no words.
-                if self.next_words > 0 && pick.raw >= NEXT_WORD_THRESHOLD {
+                if next_words > 0 && pick.raw >= next_threshold {
                     let typed = format!("{prefix}{text}");
-                    let words = logged(warned, lm.next(before, &typed, self.next_words));
-                    chain(&mut text, pick.raw, words.unwrap_or_default());
+                    let words = logged(warned, lm.next(before, &typed, next_words));
+                    chain(
+                        &mut text,
+                        pick.raw,
+                        next_threshold,
+                        words.unwrap_or_default(),
+                    );
                 }
                 Some(Suggestion {
                     text,
@@ -148,12 +249,12 @@ impl Predictor {
                 })
             }
             Caret::Next { before } => {
-                if self.next_words == 0 {
+                if next_words == 0 {
                     return None;
                 }
-                let words = logged(warned, lm.next(before, "", self.next_words))?;
+                let words = logged(warned, lm.next(before, "", next_words))?;
                 let mut text = String::new();
-                let confidence = chain(&mut text, 1.0, words);
+                let confidence = chain(&mut text, 1.0, next_threshold, words);
                 (!text.is_empty()).then_some(Suggestion { text, confidence })
             }
         }
@@ -166,6 +267,33 @@ impl Predictor {
         self.ngram.observe(text);
         if let Some(lm) = &mut self.lm {
             lm.observe(text);
+        }
+    }
+
+    /// Learns `texts` into the n-gram and language-model memory immediately,
+    /// returning deferred head-prefill work to run off the typing lock via
+    /// [`HeadUpdate::compute`] and [`Predictor::apply_head`].
+    pub fn observe_deferred<S: AsRef<str>>(&mut self, texts: &[S]) -> Option<HeadUpdate> {
+        for text in texts {
+            self.ngram.observe(text.as_ref());
+        }
+        let lm = self.lm.as_mut()?;
+        for text in texts {
+            lm.remember(text.as_ref());
+        }
+        match lm.prepare_head() {
+            Ok(update) => update.map(HeadUpdate),
+            Err(error) => {
+                tracing::warn!("axo-predict: language model head not prepared: {error:#}");
+                None
+            }
+        }
+    }
+
+    /// Installs a head computed off-lock by [`HeadUpdate::compute`].
+    pub fn apply_head(&mut self, computed: ComputedHead) {
+        if let Some(lm) = &mut self.lm {
+            lm.apply_head(computed.0);
         }
     }
 
@@ -191,12 +319,22 @@ fn logged<T>(warned: &mut bool, result: anyhow::Result<T>) -> Option<T> {
         .ok()
 }
 
+fn normalize_config(mut config: Config) -> Config {
+    config.next_words = config.next_words.min(2);
+    config.ngram_threshold = config.ngram_threshold.clamp(0.0, 1.0);
+    config.blend_threshold = config.blend_threshold.clamp(0.0, 1.0);
+    config.ngram_weight = config.ngram_weight.clamp(0.0, 1.0);
+    config.next_word_threshold = config.next_word_threshold.clamp(0.0, 1.0);
+    config.memory_max_units = config.memory_max_units.max(config.memory_units);
+    config
+}
+
 /// Appends `words` to `text`, space-separated, while their chained confidence
-/// stays at [`NEXT_WORD_THRESHOLD`] or above; returns the confidence after
-/// the last word appended.
-fn chain(text: &mut String, mut confidence: f32, words: Vec<(String, f32)>) -> f32 {
+/// stays at `threshold` or above; returns the confidence after the last word
+/// appended.
+fn chain(text: &mut String, mut confidence: f32, threshold: f32, words: Vec<(String, f32)>) -> f32 {
     for (word, word_confidence) in words {
-        if confidence * word_confidence < NEXT_WORD_THRESHOLD {
+        if confidence * word_confidence < threshold {
             break;
         }
         confidence *= word_confidence;

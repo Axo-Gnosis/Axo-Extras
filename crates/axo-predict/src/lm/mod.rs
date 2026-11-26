@@ -53,10 +53,32 @@ pub const SMOLLM2: ModelSpec = ModelSpec {
     ],
 };
 
+/// Files needed to load a Llama-architecture GGUF language model.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelFiles {
+    /// Path to the quantized GGUF weights file.
+    pub weights: PathBuf,
+    /// Path to the Hugging Face `tokenizer.json`.
+    pub tokenizer: PathBuf,
+    /// Beginning-of-sequence token id.
+    pub bos: u32,
+}
+
+impl ModelFiles {
+    /// Standard file layout for [`SMOLLM2`] inside `model_dir`.
+    pub fn smollm2(model_dir: &Path) -> Self {
+        Self {
+            weights: model_dir.join(WEIGHTS_FILE),
+            tokenizer: model_dir.join(TOKENIZER_FILE),
+            bos: SMOLLM2_BOS,
+        }
+    }
+}
+
 const TOKENIZER_FILE: &str = "tokenizer.json";
 const WEIGHTS_FILE: &str = "SmolLM2-135M.Q8_0.gguf";
 /// SmolLM2's beginning-of-sequence token.
-const BOS: u32 = 0;
+const SMOLLM2_BOS: u32 = 0;
 /// Head text before the memory: frames the context as a typed chat message.
 const PREAMBLE: &str = include_str!("preamble.txt");
 /// Context taken from `before`, in UTF-16 units.
@@ -65,17 +87,18 @@ const CONTEXT_UNITS: usize = 400;
 const CONTEXT_SLACK: usize = 256;
 /// One word in this many anchors context windows.
 const ANCHOR_EVERY: u32 = 16;
-/// Recent-prompt memory in the head after a trim, in UTF-16 units.
-const MEMORY_UNITS: usize = 1500;
-/// Memory size that triggers a trim back to [`MEMORY_UNITS`].
-const MEMORY_MAX_UNITS: usize = 2500;
+/// Default recent-prompt memory in the head after a trim, in UTF-16 units.
+pub(crate) const DEFAULT_MEMORY_UNITS: usize = 750;
+/// Default memory size that triggers a trim back to [`DEFAULT_MEMORY_UNITS`].
+pub(crate) const DEFAULT_MEMORY_MAX_UNITS: usize = 1250;
 /// Typed-past exclusion threshold τ: a suggestion at or above it counts as
 /// shown.
 const TYPED_PAST: f32 = 0.15;
-/// Alternatives searched so typed-past exclusion has a fallback.
-const ALTERNATIVES: usize = 3;
-/// Chained confidence each following word must keep to be shown.
-pub(crate) const NEXT_WORD_THRESHOLD: f32 = 0.40;
+/// Extra search expansions allowed per already-shown word so typed-past
+/// exclusion still has budget to find a fallback.
+const SKIP_BUDGET_PER_SHOWN: usize = 4;
+/// Default chained confidence each following word must keep to be shown.
+pub(crate) const DEFAULT_NEXT_WORD_THRESHOLD: f32 = 0.25;
 /// Persisted recent-prompt memory in the state directory.
 pub(crate) const STATE_FILE: &str = "memory.json";
 const STATE_VERSION: u32 = 1;
@@ -179,30 +202,58 @@ fn heal(tokenizer: &Tokenizer, context: &str, prefix: &str) -> anyhow::Result<(V
 /// grows by appending, so a new prompt extends the head instead of
 /// re-scoring it, until it passes [`MEMORY_MAX_UNITS`]; then the oldest
 /// prompts drop until it fits [`MEMORY_UNITS`] again.
-#[derive(Default)]
 struct Memory {
     recent: VecDeque<String>,
-    /// UTF-16 units of [`Memory::text`].
+    /// UTF-16 units of the remembered prompts plus separators.
     units: usize,
+    /// Target UTF-16 units after a trim.
+    target_units: usize,
+    /// Ceiling that triggers a trim back to `target_units`.
+    max_units: usize,
     /// The head no longer matches `recent`.
     dirty: bool,
 }
 
 impl Memory {
+    fn new(target_units: usize, max_units: usize) -> Self {
+        let max_units = max_units.max(target_units);
+        Self {
+            recent: VecDeque::new(),
+            units: 0,
+            target_units,
+            max_units,
+            dirty: false,
+        }
+    }
+
+    fn set_limits(&mut self, target_units: usize, max_units: usize) {
+        self.target_units = target_units;
+        self.max_units = max_units.max(target_units);
+        self.trim();
+    }
+
     fn remember(&mut self, prompt: &str) {
         if !is_typed_like(prompt) {
             return;
         }
         self.units += utf16_len(prompt) + 2;
         self.recent.push_back(prompt.to_owned());
-        if self.units > MEMORY_MAX_UNITS {
-            while self.units > MEMORY_UNITS && self.recent.len() > 1 {
+        self.trim();
+        self.dirty = true;
+    }
+
+    fn trim(&mut self) {
+        if self.units > self.max_units {
+            let before = self.recent.len();
+            while self.units > self.target_units && self.recent.len() > 1 {
                 if let Some(old) = self.recent.pop_front() {
                     self.units -= utf16_len(&old) + 2;
                 }
             }
+            if self.recent.len() != before {
+                self.dirty = true;
+            }
         }
-        self.dirty = true;
     }
 }
 
@@ -250,9 +301,36 @@ struct Context {
     branch: Branch,
 }
 
+/// Deferred head-prefill work produced by [`LanguageModel::prepare_head`] so a
+/// host can run the slow model forward pass without holding the predictor lock.
+pub(crate) struct HeadUpdate {
+    head: Lm,
+    ids: Vec<u32>,
+    from: usize,
+}
+
+/// Completed head state ready to be swapped into [`LanguageModel::apply_head`].
+pub(crate) struct ComputedHead {
+    head: Lm,
+    ids: Vec<u32>,
+    row: Arc<[f32]>,
+}
+
+impl HeadUpdate {
+    pub(crate) fn compute(mut self) -> anyhow::Result<ComputedHead> {
+        let row = self.head.feed(&self.ids[self.from..])?;
+        Ok(ComputedHead {
+            head: self.head,
+            ids: self.ids,
+            row,
+        })
+    }
+}
+
 pub(crate) struct LanguageModel {
     tokenizer: Tokenizer,
     index: TokenIndex,
+    bos: u32,
     /// Nothing consumed.
     fresh: Lm,
     head: Lm,
@@ -267,13 +345,18 @@ pub(crate) struct LanguageModel {
 }
 
 impl LanguageModel {
-    /// Loads the model files from `model_dir` and the prompt memory from
-    /// `state_dir`, then consumes the head.
-    pub fn open(model_dir: &Path, state_dir: &Path) -> anyhow::Result<Self> {
-        let tokenizer = Tokenizer::from_file(model_dir.join(TOKENIZER_FILE))
+    /// Loads the model files and the prompt memory from `state_dir`, then
+    /// consumes the head.
+    pub fn open(
+        files: &ModelFiles,
+        state_dir: &Path,
+        memory_units: usize,
+        memory_max_units: usize,
+    ) -> anyhow::Result<Self> {
+        let tokenizer = Tokenizer::from_file(&files.tokenizer)
             .map_err(anyhow::Error::msg)
-            .context("load the SmolLM2 tokenizer")?;
-        let fresh = Lm::load(&model_dir.join(WEIGHTS_FILE))?;
+            .with_context(|| format!("load tokenizer {}", files.tokenizer.display()))?;
+        let fresh = Lm::load(&files.weights)?;
         let specials = tokenizer.get_added_tokens_decoder();
         let texts = (0..tokenizer.get_vocab_size(true) as u32)
             .map(|id| {
@@ -283,7 +366,7 @@ impl LanguageModel {
                     .then_some(text)
             })
             .collect();
-        let mut memory = Memory::default();
+        let mut memory = Memory::new(memory_units, memory_max_units);
         let path = state_dir.join(STATE_FILE);
         match std::fs::read(&path) {
             Ok(bytes) => {
@@ -303,6 +386,7 @@ impl LanguageModel {
         }
         let mut lm = Self {
             index: TokenIndex::new(texts),
+            bos: files.bos,
             head: fresh.clone(),
             fresh,
             head_ids: Vec::new(),
@@ -318,32 +402,62 @@ impl LanguageModel {
         Ok(lm)
     }
 
-    /// Consumes `[BOS] + PREAMBLE + memory`, each prompt followed by a blank
-    /// line, feeding only the new tail when the old head is a prefix of it.
+    pub fn set_memory_limits(&mut self, target_units: usize, max_units: usize) {
+        self.memory.set_limits(target_units, max_units);
+    }
+
+    /// Encodes `[BOS] + PREAMBLE + memory` and clones the base `Lm` needed to
+    /// advance the head, without running the model forward pass yet.
     ///
     /// The preamble and each prompt are encoded on their own: a trailing
     /// `"\n\n"` is one token at the end of the text but two before a letter,
     /// so encoding the whole text would change the old tail on every append
     /// and re-feed the head from scratch.
-    fn update_head(&mut self) -> anyhow::Result<()> {
-        let mut ids = vec![BOS];
+    pub fn prepare_head(&mut self) -> anyhow::Result<Option<HeadUpdate>> {
+        let mut ids = vec![self.bos];
         ids.extend_from_slice(encode(&self.tokenizer, PREAMBLE)?.get_ids());
         for prompt in &self.memory.recent {
             ids.extend_from_slice(encode(&self.tokenizer, &format!("{prompt}\n\n"))?.get_ids());
         }
-        let (mut head, from) = if ids.starts_with(&self.head_ids) {
+        let (head, from) = if ids.starts_with(&self.head_ids) {
             (self.head.clone(), self.head_ids.len())
         } else {
             (self.fresh.clone(), 0)
         };
-        if from < ids.len() {
-            self.head_row = head.feed(&ids[from..])?;
-            self.head = head;
-            self.head_ids = ids;
-            self.context = None;
-        }
         self.memory.dirty = false;
+        if from >= ids.len() {
+            return Ok(None);
+        }
+        Ok(Some(HeadUpdate { head, ids, from }))
+    }
+
+    /// Installs a head computed off-lock. Ignored if memory changed again while
+    /// it was computing.
+    pub fn apply_head(&mut self, computed: ComputedHead) {
+        if self.memory.dirty {
+            return;
+        }
+        self.head = computed.head;
+        self.head_ids = computed.ids;
+        self.head_row = computed.row;
+        self.context = None;
+    }
+
+    fn update_head(&mut self) -> anyhow::Result<()> {
+        if let Some(update) = self.prepare_head()? {
+            let computed = update.compute()?;
+            self.apply_head(computed);
+        }
         Ok(())
+    }
+
+    /// Remembers a submitted prompt without running the model forward pass.
+    /// Call [`Self::prepare_head`] afterwards to build deferred head work.
+    pub fn remember(&mut self, text: &str) {
+        self.memory.remember(text);
+        if self.memory.dirty {
+            self.unsaved = true;
+        }
     }
 
     /// Remembers a submitted prompt and extends the head with it.
@@ -389,11 +503,15 @@ impl LanguageModel {
             return Ok(None);
         };
         let target = format!("{}{prefix}", context.lead);
-        let alternatives = search::complete_nbest(
+        let mut params = SearchParams::default();
+        params.max_expand += SKIP_BUDGET_PER_SHOWN * self.shown.words.len().min(2);
+        let shown = &self.shown.words;
+        let alternatives = search::complete_nbest_filtered(
             &self.index,
-            SearchParams::default(),
+            params,
             &target,
-            ALTERNATIVES,
+            1,
+            |suffix| shown.contains(&Shown::key(prefix, suffix)),
             &mut context.branch,
         );
         let alternatives = match alternatives {
@@ -403,10 +521,7 @@ impl LanguageModel {
                 return Err(error);
             }
         };
-        let Some((suffix, confidence)) = alternatives
-            .into_iter()
-            .find(|(suffix, _)| !self.shown.words.contains(&Shown::key(prefix, suffix)))
-        else {
+        let Some((suffix, confidence)) = alternatives.into_iter().next() else {
             return Ok(None);
         };
         if confidence >= TYPED_PAST {
@@ -422,8 +537,14 @@ impl LanguageModel {
         let mut branch = self.branch_after(ids.get_ids())?;
         let mut words = Vec::new();
         while words.len() < usize::from(max) {
-            let best =
-                search::complete_nbest(&self.index, SearchParams::default(), " ", 1, &mut branch)?;
+            let best = search::complete_nbest_filtered(
+                &self.index,
+                SearchParams::default(),
+                " ",
+                1,
+                |_| false,
+                &mut branch,
+            )?;
             let Some((word, confidence)) = best.into_iter().next().filter(|(w, _)| !w.is_empty())
             else {
                 break;

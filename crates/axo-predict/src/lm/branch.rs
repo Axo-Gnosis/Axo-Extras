@@ -54,12 +54,13 @@ fn log_softmax(mut logits: Vec<f32>) -> Arc<[f32]> {
     logits.into()
 }
 
-/// A consumed context and the rows explored from it. Implements `search::Rows`.
+/// A consumed context and the nodes explored from it. Implements `search::Rows`.
 pub(super) struct Branch {
     lm: Lm,
     root: Arc<[f32]>,
-    /// Rows after token paths from `lm`, for the search.
-    rows: HashMap<Vec<u32>, Arc<[f32]>>,
+    /// Cached `(lm, row)` after token paths from `lm`, so each child expansion
+    /// is a single-token forward off its parent.
+    nodes: HashMap<Vec<u32>, (Lm, Arc<[f32]>)>,
 }
 
 impl Branch {
@@ -67,7 +68,7 @@ impl Branch {
         Self {
             lm,
             root,
-            rows: HashMap::new(),
+            nodes: HashMap::new(),
         }
     }
 
@@ -77,11 +78,22 @@ impl Branch {
             return Ok(Self {
                 lm: self.lm.clone(),
                 root: Arc::clone(&self.root),
-                rows: self.rows.clone(),
+                nodes: self.nodes.clone(),
             });
         }
-        let mut lm = self.lm.clone();
-        let root = lm.feed(tokens)?;
+        if let Some((lm, root)) = self.nodes.get(tokens) {
+            return Ok(Self::new(lm.clone(), Arc::clone(root)));
+        }
+        let mut split = tokens.len() - 1;
+        while split > 0 && !self.nodes.contains_key(&tokens[..split]) {
+            split -= 1;
+        }
+        let mut lm = if split == 0 {
+            self.lm.clone()
+        } else {
+            self.nodes[&tokens[..split]].0.clone()
+        };
+        let root = lm.feed(&tokens[split..])?;
         Ok(Self::new(lm, root))
     }
 }
@@ -91,12 +103,20 @@ impl search::Rows for Branch {
         if path.is_empty() {
             return Ok(Arc::clone(&self.root));
         }
-        if let Some(row) = self.rows.get(path) {
+        if let Some((_, row)) = self.nodes.get(path) {
             return Ok(Arc::clone(row));
         }
-        // ponytail: each uncached path re-feeds from the context clone; keep per-node clones if the bench shows it matters
-        let row = self.lm.clone().feed(path)?;
-        self.rows.insert(path.to_vec(), Arc::clone(&row));
+        let mut split = path.len() - 1;
+        while split > 0 && !self.nodes.contains_key(&path[..split]) {
+            split -= 1;
+        }
+        let mut lm = if split == 0 {
+            self.lm.clone()
+        } else {
+            self.nodes[&path[..split]].0.clone()
+        };
+        let row = lm.feed(&path[split..])?;
+        self.nodes.insert(path.to_vec(), (lm, Arc::clone(&row)));
         Ok(row)
     }
 }

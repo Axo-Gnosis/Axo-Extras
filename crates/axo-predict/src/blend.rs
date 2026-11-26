@@ -7,24 +7,30 @@
 //! prompts the blend saved 39.6 % of keystrokes against SmolLM's 37.7 % and
 //! the n-gram's 32.4 %, at a similar wrong-ghost rate.
 
-/// The n-gram's share of the blend; the language model gets the rest.
-const NGRAM_WEIGHT: f32 = 0.3;
-/// Minimum blended score to show a completion.
-const SHOW_THRESHOLD: f32 = 0.05;
+/// Default n-gram share of the blend; the language model gets the rest.
+pub(crate) const DEFAULT_NGRAM_WEIGHT: f32 = 0.3;
+/// Default minimum blended score to show a completion.
+pub(crate) const DEFAULT_SHOW_THRESHOLD: f32 = 0.05;
 
 /// The completion to show.
 pub(crate) struct Blended {
     pub suffix: String,
-    /// Blended score, at least [`SHOW_THRESHOLD`].
+    /// Blended score, at least `show_threshold`.
     pub score: f32,
     /// Confidence of the engine that produced the pick; the larger when both agree.
     pub raw: f32,
 }
 
 /// Blends each engine's `(suffix, confidence)`; `None` shows nothing.
-pub(crate) fn blend(ngram: Option<(String, f32)>, lm: Option<(String, f32)>) -> Option<Blended> {
-    let ngram_score = ngram.as_ref().map_or(0.0, |(_, c)| NGRAM_WEIGHT * c);
-    let lm_score = lm.as_ref().map_or(0.0, |(_, c)| (1.0 - NGRAM_WEIGHT) * c);
+pub(crate) fn blend(
+    ngram: Option<(String, f32)>,
+    lm: Option<(String, f32)>,
+    ngram_weight: f32,
+    show_threshold: f32,
+) -> Option<Blended> {
+    let ngram_weight = ngram_weight.clamp(0.0, 1.0);
+    let ngram_score = ngram.as_ref().map_or(0.0, |(_, c)| ngram_weight * c);
+    let lm_score = lm.as_ref().map_or(0.0, |(_, c)| (1.0 - ngram_weight) * c);
     let blended = match (ngram, lm) {
         (Some((suffix, n)), Some((other, m))) if suffix.to_lowercase() == other.to_lowercase() => {
             Blended {
@@ -45,5 +51,5 @@ pub(crate) fn blend(ngram: Option<(String, f32)>, lm: Option<(String, f32)>) -> 
         },
         (_, None) => return None,
     };
-    (blended.score >= SHOW_THRESHOLD).then_some(blended)
+    (blended.score >= show_threshold).then_some(blended)
 }

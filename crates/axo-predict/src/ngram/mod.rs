@@ -122,6 +122,11 @@ impl NgramPredictor {
         })
     }
 
+    /// Updates the minimum confidence needed to show an n-gram completion.
+    pub fn set_show_threshold(&mut self, threshold: f32) {
+        self.model.params.show_threshold = threshold;
+    }
+
     /// Best completion of `prefix` after `before`: the suffix to show and its
     /// confidence, already above [`Params::show_threshold`].
     pub fn complete(&mut self, before: &str, prefix: &str) -> Option<(String, f32)> {
