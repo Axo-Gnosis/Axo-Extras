@@ -1,6 +1,15 @@
 # Axo-Extras
 
-Subscription providers for [axo](https://git.ryot.foo/toph/axo), kept out of axo's core. axo speaks wire protocols; these crates sign in to a subscription and plug into axo's provider seam (`Provider::login`, `Provider::transport`, `Provider::list_models`, `Provider::usage`, `compat.toolNamePrefix`).
+Optional capabilities for [axo](https://git.ryot.foo/toph/axo) hosts, kept out of axo's core. A host embeds only the crates it wants.
+
+| Crate | What it adds |
+|---|---|
+| `axo-models` | Pinned local model files: verified download onto disk and a typed state (missing, downloading, ready, failed) |
+| `axo-predict` | Local predictive text for prompt editors: word completion from a personal n-gram engine, plus next-word suggestion with an optional on-device language model ([README](crates/axo-predict/README.md)) |
+
+## Subscription providers
+
+axo speaks wire protocols; these crates sign in to a subscription and plug into axo's provider seam (`Provider::login`, `Provider::transport`, `Provider::list_models`, `Provider::usage`, `compat.toolNamePrefix`).
 
 | Crate | Provider id | What it adds |
 |---|---|---|
@@ -20,7 +29,9 @@ Usage limits are read through axo: `Models::usage(id)` returns what is known wit
 
 ## Versioning
 
-`axo-ai` is pinned by git rev in `Cargo.toml`. It must equal the host's axo rev, or Cargo builds two `axo-ai` crates and `Provider` does not type-check. Bump both together.
+`axo-ai` is pinned by git rev in `Cargo.toml`. It must equal the host's axo rev, or Cargo builds two `axo-ai` crates and `Provider` does not type-check. Bump both together. Crates without an `axo-ai` dependency (`axo-models`, `axo-predict`) are exempt from this rule.
+
+`candle-core` is temporarily patched to a fork carrying an unreleased fix (see `[patch.crates-io]` in `Cargo.toml`). Patches do not propagate to dependents: a host that uses `axo-predict` must carry the same `[patch.crates-io]` line.
 
 To develop against a local axo checkout, add an untracked `.cargo/config.toml`:
 

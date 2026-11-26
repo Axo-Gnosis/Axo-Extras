@@ -1,5 +1,5 @@
 {
-  description = "Axo-Extras: providers that live outside axo core";
+  description = "Axo-Extras: optional capabilities for axo hosts (subscription providers, local models, predictive text)";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   outputs = { self, nixpkgs }:
     let

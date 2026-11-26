@@ -1,0 +1,16 @@
+[package]
+name = "axo-models"
+version = "0.0.0"
+description = "Pinned local model files for axo hosts: verified download and state"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

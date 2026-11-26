@@ -12,8 +12,12 @@ repository = "https://git.ryot.foo/toph/Axo-Extras"
 # The rev must equal the host's axo rev, or Cargo builds two `axo-ai` crates.
 axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
 # Versions and features match axo's `[workspace.dependencies]`.
+anyhow = "1.0"
 async-trait = "0.1.92"
 base64 = "0.23.1"
+# candle and tokenizers match Axome's, or the host builds two of each.
+candle-core = "0.11"
+candle-transformers = "0.11"
 futures = "0.3.34"
 jiff = "0.2.38"
 rand = "0.10.3"
@@ -22,13 +26,23 @@ serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.11.1"
 tempfile = "3.27.0"
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 tokio-util = "0.7.20"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util", "io-std", "process"] }
 tracing = "0.1.44"
 url = "2.5.8"
+zstd = "0.13"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# candle-core 0.11.1 re-reads /proc/cpuinfo on every CPU matmul unless
+# RAYON_NUM_THREADS is set (~55 ms instead of ~15 ms per forward). This fork is
+# 0.11.1 plus the fix from https://github.com/huggingface/candle/pull/4067.
+# Patches do not reach dependents: hosts must carry the same line.
+# ponytail: drop this once a candle release includes the fix.
+[patch.crates-io]
+candle-core = { git = "https://git.ryot.foo/toph/candle.git", rev = "e2af193fe630f2d86c39fd6f5c9f993d0aa60cdf" }
