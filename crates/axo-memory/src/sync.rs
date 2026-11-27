@@ -2,7 +2,6 @@
 use crate::{Index, Result, format, index::bank_path, links, permalink::permalink};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
@@ -11,7 +10,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 use walkdir::WalkDir;
-#[derive(Debug, Default, Clone, Copy, Serialize)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct SyncReport {
     pub added: usize,
     pub changed: usize,

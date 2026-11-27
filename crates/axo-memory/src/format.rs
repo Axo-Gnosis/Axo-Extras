@@ -1,11 +1,10 @@
 // Ported from Basic Memory (https://github.com/basicmachines-co/basic-memory, 7a1ff5f), AGPL-3.0-or-later.
 use crate::temporal::{self, TimeRange};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use serde_norway::{Mapping, Value};
 use std::sync::LazyLock;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct Frontmatter {
     pub title: Option<String>,
     pub note_type: Option<String>,
@@ -15,7 +14,7 @@ pub struct Frontmatter {
     pub modified: Option<String>,
     pub extra: Mapping,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Observation {
     pub category: String,
     pub content: String,
@@ -24,12 +23,11 @@ pub struct Observation {
     pub time: Option<TimeRange>,
     pub line: usize,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Relation {
     pub relation_type: String,
     pub target: String,
     pub context: Option<String>,
-    pub line: usize,
 }
 #[derive(Debug, Clone)]
 pub struct Note {
@@ -163,7 +161,7 @@ pub fn parse(text: &str) -> Note {
         }
         let masked = mask_code(line);
         let links = wikilinks(&masked);
-        let explicit = item(&masked).and_then(|body| explicit_relation(body, number));
+        let explicit = item(&masked).and_then(explicit_relation);
         if let Some(r) = explicit {
             note.relations.push(r);
         } else {
@@ -172,13 +170,12 @@ pub fn parse(text: &str) -> Note {
                     relation_type: "links_to".into(),
                     target: target.into(),
                     context: None,
-                    line: number,
                 }));
         }
     }
     note
 }
-pub(crate) fn peel_context(text: &str) -> (&str, Option<&str>) {
+fn peel_context(text: &str) -> (&str, Option<&str>) {
     if let Some(prefix) = text.strip_suffix(')')
         && let Some((body, context)) = prefix.rsplit_once('(')
     {
@@ -282,7 +279,7 @@ fn wikilinks(s: &str) -> Vec<&str> {
     }
     out
 }
-fn explicit_relation(body: &str, line: usize) -> Option<Relation> {
+fn explicit_relation(body: &str) -> Option<Relation> {
     let start = body.find("[[")?;
     if escaped(body, start) {
         return None;
@@ -331,6 +328,5 @@ fn explicit_relation(body: &str, line: usize) -> Option<Relation> {
         relation_type: label.into(),
         target: target.into(),
         context,
-        line,
     })
 }

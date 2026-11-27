@@ -3,19 +3,15 @@
 
 pub(crate) mod log;
 mod transcript;
+mod writer;
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock},
-    time::Duration,
+    sync::Arc,
 };
 
-use axo::{AgentSpec, Axo, PromptRequest, PromptResult, RecoveryPolicy, Session, SessionOptions};
-use axo_agent::{AgentMessage, RunOutcome};
-use axo_ai::Message;
+use axo::{AgentSpec, Axo, RecoveryPolicy, Session, SessionOptions};
 use chrono::Utc;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
 use tokio::sync::OwnedMutexGuard;
 use tokio_util::sync::CancellationToken;
 
@@ -24,56 +20,18 @@ use crate::{
     index::LocatedObservation, invalid, links,
 };
 use log::{ClosedLine, Log, NewFact, Undo};
-use transcript::{Chunk, message_text, transcript};
+use transcript::{Chunk, transcript};
+pub use writer::writer_agent;
+use writer::{Candidate, Choice};
 
-const EXTRACT_PROMPT: &str = r#"Project: {project}
-Date: {date}
-
-Session excerpt:
-<session>
-{transcript}
-</session>
-
-List the facts from this excerpt that will still matter in future sessions: decisions and their reasons, facts about how the project works, and preferences or corrections the user stated.
-Leave out task progress, things being tried, tool output, and anything only the assistant claimed without the user accepting it.
-
-One fact per line, at most 12 lines, in exactly this form:
-<page> :: [<category>] <fact>
-
-<page> is "{project}/<Topic>" for facts about the project, or "me/<Topic>" for facts about the user that hold across projects. Topics are short noun phrases; reuse the same page for related facts.
-<category> is one of: decision, fact, preference, reason, problem.
-<fact> is one self-contained sentence. Link another page by writing [[{project}/<Topic>]] inside it when it clearly relates.
-
-If nothing qualifies, answer exactly: NONE"#;
-
-const CLASSIFY_PROMPT: &str = r#"New fact:
-[{category}] {fact}
-
-Existing notes:
-{numbered}
-
-Compare the new fact with the existing notes. Answer with exactly one of:
-NEW          - it says something none of them say
-SAME <n>     - note <n> already says this
-REPLACES <n> - it updates or contradicts note <n>, which is now out of date
-SKIP         - it is not worth keeping after all"#;
-
-static CANDIDATE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?P<page>[^:\n]{1,120}?)\s*::\s*\[(?P<category>decision|fact|preference|reason|problem)\]\s+(?P<fact>.{8,400})$").unwrap()
-});
-static CLASSIFICATION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(NEW|SKIP|(SAME|REPLACES)\s+(\d+))\s*$").unwrap());
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FactOutcome {
     New,
     Updated,
     Known,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct CapturedFact {
     pub id: i64,
     pub outcome: FactOutcome,
@@ -87,8 +45,7 @@ pub struct CapturedFact {
     pub reverted: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct CaptureRun {
     pub id: i64,
     pub session_id: String,
@@ -105,22 +62,6 @@ pub struct CaptureRun {
     pub facts: Vec<CapturedFact>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CaptureQuery {
-    pub session_id: Option<String>,
-    pub bank: Option<String>,
-    /// Clamped to 1..=500.
-    pub limit: u32,
-}
-
-/// The bundled writer agent. Hosts may change its `model` or pass their own spec.
-pub fn writer_agent() -> AgentSpec {
-    let (spec, diagnostics) = AgentSpec::parse("memory-writer", include_str!("writer.md"));
-    assert!(diagnostics.is_empty(), "writer.md: {diagnostics:?}");
-    spec.expect("writer.md is a valid agent")
-}
-
 pub struct CaptureRequest {
     /// The session file to read.
     pub session: PathBuf,
@@ -134,19 +75,6 @@ pub struct CaptureRequest {
     /// Called when the run starts and after each chunk.
     pub progress: Option<Box<dyn Fn(CaptureRun) + Send + Sync>>,
     pub cancel: CancellationToken,
-}
-
-struct Candidate {
-    page: String,
-    category: String,
-    fact: String,
-}
-
-enum Choice {
-    New,
-    Same(usize),
-    Replace(usize),
-    Skip,
 }
 
 impl Memory {
@@ -286,9 +214,15 @@ impl Memory {
         self.log(move |log| log.get(id)).await
     }
 
-    /// Newest first. Blocks briefly.
-    pub fn captures(&self, query: &CaptureQuery) -> Result<Vec<CaptureRun>> {
-        self.log.list(query)
+    /// Newest first, optionally of one session or bank; `limit` is clamped to 1..=500.
+    /// Blocks briefly.
+    pub fn captures(
+        &self,
+        session_id: Option<&str>,
+        bank: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<CaptureRun>> {
+        self.log.list(session_id, bank, limit)
     }
 
     /// The run holding `fact_id`.
@@ -387,33 +321,19 @@ impl Memory {
     ) -> Result<()> {
         let bank = banks.default_bank();
         let date = Utc::now().format("%Y-%m-%d").to_string();
-        let prompt = EXTRACT_PROMPT
-            .replace("{project}", project)
-            .replace("{date}", &date)
-            .replace("{transcript}", transcript);
-        let reply = ask(session, prompt).await?;
-        for found in reply
-            .lines()
-            .filter_map(|line| CANDIDATE.captures(line))
-            .take(12)
-        {
-            let candidate = Candidate {
-                page: found["page"].trim().into(),
-                category: found["category"].into(),
-                fact: found["fact"].into(),
-            };
+        for candidate in writer::extract(session, project, &date, transcript).await? {
             let hits = self
                 .search(
                     banks,
                     SearchRequest {
                         query: candidate.fact.clone(),
                         types: vec!["observation".into()],
-                        limit: 5,
+                        limit: Some(5),
                         ..Default::default()
                     },
                 )
                 .await?;
-            let observations = self
+            let mut observations = self
                 .indexed(vec![bank.clone()], move |index| {
                     hits.iter()
                         .map(|hit| {
@@ -424,37 +344,10 @@ impl Memory {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            let choice = if observations.is_empty() {
-                Choice::New
-            } else {
-                // Classify full observation text, not truncated/highlighted search snippets.
-                let numbered = observations
-                    .iter()
-                    .enumerate()
-                    .map(|(n, located)| {
-                        format!(
-                            "{}. ({}) [{}] {}",
-                            n + 1,
-                            located.entity.title,
-                            located.observation.category,
-                            located.observation.content
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let prompt = CLASSIFY_PROMPT
-                    .replace("{category}", &candidate.category)
-                    .replace("{fact}", &candidate.fact)
-                    .replace("{numbered}", &numbered);
-                classify(&ask(session, prompt).await?, observations.len())
-            };
-            let fact = match choice {
+            let fact = match writer::classify(session, &candidate, &observations).await? {
                 Choice::Skip => continue,
                 Choice::Same(n) => {
-                    let known = observations
-                        .into_iter()
-                        .nth(n)
-                        .ok_or_else(|| invalid("Memory observation missing"))?;
+                    let known = observations.swap_remove(n);
                     let path = bank.dir().join(&known.entity.file_path);
                     NewFact {
                         outcome: FactOutcome::Known,
@@ -466,29 +359,21 @@ impl Memory {
                         undo: None,
                     }
                 }
-                Choice::New | Choice::Replace(_) => {
-                    let old = match choice {
-                        Choice::Replace(n) => observations.into_iter().nth(n),
-                        _ => None,
-                    };
-                    let previous = old.as_ref().map(|old| old.observation.content.clone());
-                    let (category, text) = (candidate.category.clone(), candidate.fact.clone());
-                    let (path, undo) = self
-                        .apply_candidate(bank, candidate, old, date.clone(), session_id.to_owned())
-                        .await?;
-                    NewFact {
-                        outcome: if previous.is_some() {
-                            FactOutcome::Updated
-                        } else {
-                            FactOutcome::New
-                        },
-                        category,
-                        text,
-                        previous,
-                        note: note_name(bank, &path),
-                        path: path.to_string_lossy().into_owned(),
-                        undo: Some(undo),
-                    }
+                Choice::New => {
+                    self.apply_candidate(bank, candidate, FactOutcome::New, None, &date, session_id)
+                        .await?
+                }
+                Choice::Replace(n) => {
+                    let old = observations.swap_remove(n);
+                    self.apply_candidate(
+                        bank,
+                        candidate,
+                        FactOutcome::Updated,
+                        Some(old),
+                        &date,
+                        session_id,
+                    )
+                    .await?
                 }
             };
             self.log(move |log| log.add_fact(capture_id, fact)).await?;
@@ -502,10 +387,11 @@ impl Memory {
         self: &Arc<Self>,
         bank: &Bank,
         candidate: Candidate,
+        outcome: FactOutcome,
         old: Option<LocatedObservation>,
-        date: String,
-        session_id: String,
-    ) -> Result<(PathBuf, Undo)> {
+        date: &str,
+        session_id: &str,
+    ) -> Result<NewFact> {
         let mut relative = PathBuf::new();
         for segment in candidate.page.split('/') {
             let segment = segment.trim();
@@ -542,8 +428,11 @@ impl Memory {
             .as_ref()
             .map(|hit| checked_path(bank, &bank.dir().join(&hit.entity.file_path)))
             .transpose()?;
+        let previous = old.as_ref().map(|old| old.observation.content.clone());
+        let (category, text) = (candidate.category.clone(), candidate.fact.clone());
+        let (date, session_id) = (date.to_owned(), session_id.to_owned());
         let guards = lock_notes([Some(path.clone()), old_path.clone()].into_iter().flatten()).await;
-        tokio::task::spawn_blocking(move || -> Result<(PathBuf, Undo)> {
+        let (path, undo) = tokio::task::spawn_blocking(move || -> Result<(PathBuf, Undo)> {
             let _guards = guards;
             let mut text = match std::fs::read_to_string(&path) {
                 Ok(text) => text,
@@ -615,7 +504,16 @@ impl Memory {
                 },
             ))
         })
-        .await?
+        .await??;
+        Ok(NewFact {
+            outcome,
+            category,
+            text,
+            previous,
+            note: note_name(bank, &path),
+            path: path.to_string_lossy().into_owned(),
+            undo: Some(undo),
+        })
     }
 }
 
@@ -655,58 +553,4 @@ fn note_name(bank: &Bank, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy();
     relative.strip_suffix(".md").unwrap_or(&relative).to_owned()
-}
-
-fn classify(reply: &str, count: usize) -> Choice {
-    let Some(line) = reply.lines().find(|line| !line.trim().is_empty()) else {
-        return Choice::Skip;
-    };
-    let Some(captures) = CLASSIFICATION.captures(line) else {
-        return Choice::Skip;
-    };
-    if &captures[1] == "NEW" {
-        return Choice::New;
-    }
-    let n = captures
-        .get(3)
-        .and_then(|n| n.as_str().parse::<usize>().ok())
-        .filter(|n| *n > 0 && *n <= count);
-    match (captures.get(2).map(|kind| kind.as_str()), n) {
-        (Some("REPLACES"), Some(n)) => Choice::Replace(n - 1),
-        (Some("SAME"), Some(n)) => Choice::Same(n - 1),
-        _ => Choice::Skip,
-    }
-}
-
-async fn ask(session: &Session, text: String) -> Result<String> {
-    let result = tokio::time::timeout(
-        Duration::from_secs(600),
-        session.prompt_with(PromptRequest {
-            input: text.into(),
-            request_id: None,
-        }),
-    )
-    .await
-    .map_err(|_| invalid("Memory writer timed out"))??;
-    if !matches!(
-        result,
-        PromptResult::Settled {
-            outcome: RunOutcome::Done,
-            ..
-        }
-    ) {
-        return Err(invalid("Memory writer did not finish successfully"));
-    }
-    let attach = session.attach(None).await;
-    let message = attach
-        .live
-        .messages
-        .iter()
-        .rev()
-        .find_map(|message| match message {
-            AgentMessage::Llm(message @ Message::Assistant(_)) => Some(message),
-            _ => None,
-        })
-        .ok_or_else(|| invalid("Memory writer returned no assistant reply"))?;
-    Ok(message_text(message).collect::<Vec<_>>().join("\n"))
 }

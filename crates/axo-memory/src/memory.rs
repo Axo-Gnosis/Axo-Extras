@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -24,18 +24,29 @@ pub struct Memory {
     pub(crate) capturing: tokio::sync::Mutex<()>,
 }
 
-#[derive(Default)]
+/// `memory_search`'s arguments; the tool's JSON schema states their constraints.
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SearchRequest {
     pub query: String,
+    #[serde(default)]
     pub types: Vec<String>,
+    #[serde(default)]
     pub categories: Vec<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
     pub after: Option<String>,
+    #[serde(default)]
     pub valid_at: Option<String>,
     /// Search every bank, not just the default one.
+    #[serde(default)]
     pub all_banks: bool,
-    pub limit: usize,
+    /// 10 when unset; clamped to 1..=50.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 /// A search hit with its note's `memory://` URL and, on the first hit from each note,
@@ -58,8 +69,9 @@ pub struct NoteLink {
 }
 
 impl Memory {
-    /// Touches no files; each file is created on first write. Open a root once per
-    /// process: opening the capture log closes the runs it finds unfinished.
+    /// Touches no files: `index.db` is created by the first search or count, `captures.db`
+    /// when a capture first records a run or a cursor. Open a root once per process:
+    /// opening the capture log closes the runs it finds unfinished.
     pub fn open(root: PathBuf) -> Arc<Self> {
         Arc::new(Self {
             log: Log::new(root.join("captures.db")),
@@ -69,10 +81,6 @@ impl Memory {
             wanted: Notify::new(),
             capturing: tokio::sync::Mutex::new(()),
         })
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     /// `<root>/banks/<name>`: where a bank lives unless the host puts it elsewhere.
@@ -194,8 +202,7 @@ impl Memory {
                     path_prefix: request.path.as_deref(),
                     after: request.after.as_deref(),
                     valid_at: request.valid_at.as_deref(),
-                    limit: request.limit.clamp(1, 50),
-                    ..Default::default()
+                    limit: request.limit.unwrap_or(10).clamp(1, 50),
                 },
             )?;
             let url = |bank_id: i64, file_path: &str| {

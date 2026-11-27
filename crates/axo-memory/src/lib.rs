@@ -3,34 +3,33 @@
 //! search, the `memory://` scheme and `memory_search` tool, and capture of durable
 //! facts from finished sessions.
 
-pub mod edit;
-pub mod format;
-pub mod index;
-pub mod links;
-pub mod permalink;
-pub mod search;
-pub mod sync;
-pub mod temporal;
-
 mod bank;
 #[cfg(feature = "bge")]
 mod bge;
 mod capture;
+mod edit;
 mod embed;
+mod format;
+mod index;
+mod links;
 mod memory;
+mod permalink;
 mod scheme;
+mod search;
+mod sync;
+mod temporal;
 mod tool;
 
 pub use bank::{Bank, Banks, valid_bank_name};
 #[cfg(feature = "bge")]
 pub use bge::{BGE_SMALL, BgeSmall};
-pub use capture::{
-    CaptureQuery, CaptureRequest, CaptureRun, CapturedFact, FactOutcome, writer_agent,
-};
+pub use capture::{CaptureRequest, CaptureRun, CapturedFact, FactOutcome, writer_agent};
 pub use embed::Embedder;
-pub use index::Index;
+pub(crate) use index::Index;
+pub use links::Direction;
 pub use memory::{Hit, Memory, NoteLink, SearchRequest};
 pub use scheme::{Guard, MemoryScheme};
+pub use search::SearchHit;
 pub use tool::SearchTool;
 
 #[derive(Debug, thiserror::Error)]

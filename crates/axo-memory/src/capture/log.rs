@@ -10,7 +10,7 @@ use std::{
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{CaptureQuery, CaptureRun, CapturedFact, FactOutcome};
+use super::{CaptureRun, CapturedFact, FactOutcome};
 use crate::{Result, invalid, lock};
 
 const SCHEMA: &str = r"
@@ -164,13 +164,10 @@ impl Log {
         }
     }
 
-    /// The open connection; `None` when `create` is false and the file does not exist.
-    fn conn(&self, create: bool) -> Result<Option<MutexGuard<'_, Option<Connection>>>> {
+    /// The connection slot, opened unless `create` is false and the file does not exist.
+    fn conn(&self, create: bool) -> Result<MutexGuard<'_, Option<Connection>>> {
         let mut slot = lock(&self.conn);
-        if slot.is_none() {
-            if !create && !self.path.exists() {
-                return Ok(None);
-            }
+        if slot.is_none() && (create || self.path.exists()) {
             if let Some(parent) = self.path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -191,23 +188,19 @@ impl Log {
             )?;
             *slot = Some(conn);
         }
-        Ok(Some(slot))
+        Ok(slot)
     }
 
-    fn read<T>(
-        &self,
-        missing: impl FnOnce() -> Result<T>,
-        f: impl FnOnce(&Connection) -> Result<T>,
-    ) -> Result<T> {
-        match self.conn(false)? {
-            Some(guard) => f(guard.as_ref().expect("opened")),
-            None => missing(),
+    /// `None` without touching the disk when the file does not exist.
+    fn read<T>(&self, f: impl FnOnce(&Connection) -> Result<Option<T>>) -> Result<Option<T>> {
+        match &*self.conn(false)? {
+            Some(conn) => f(conn),
+            None => Ok(None),
         }
     }
 
     fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let guard = self.conn(true)?.expect("created");
-        f(guard.as_ref().expect("opened"))
+        f(self.conn(true)?.as_ref().expect("created"))
     }
 
     pub fn start(
@@ -266,41 +259,40 @@ impl Log {
     }
 
     pub fn get(&self, capture_id: i64) -> Result<CaptureRun> {
-        let not_found = || invalid("Memory capture not found");
-        self.read(
-            || Err(not_found()),
-            |conn| {
-                let run = conn
-                    .query_row(
-                        &format!("SELECT {RUN_COLUMNS} FROM capture WHERE id = ?1"),
-                        [capture_id],
-                        run,
-                    )
-                    .optional()?
-                    .ok_or_else(not_found)?;
-                with_facts(conn, run)
-            },
-        )
+        self.read(|conn| {
+            conn.query_row(
+                &format!("SELECT {RUN_COLUMNS} FROM capture WHERE id = ?1"),
+                [capture_id],
+                run,
+            )
+            .optional()?
+            .map(|run| with_facts(conn, run))
+            .transpose()
+        })?
+        .ok_or_else(|| invalid("Memory capture not found"))
     }
 
-    pub fn list(&self, query: &CaptureQuery) -> Result<Vec<CaptureRun>> {
-        self.read(
-            || Ok(Vec::new()),
-            |conn| {
-                let runs = conn
-                    .prepare(&format!(
-                        "SELECT {RUN_COLUMNS} FROM capture
-                         WHERE (?1 IS NULL OR session_id = ?1) AND (?2 IS NULL OR bank = ?2)
-                         ORDER BY id DESC LIMIT ?3"
-                    ))?
-                    .query_map(
-                        params![query.session_id, query.bank, query.limit.clamp(1, 500)],
-                        run,
-                    )?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                runs.into_iter().map(|run| with_facts(conn, run)).collect()
-            },
-        )
+    pub fn list(
+        &self,
+        session_id: Option<&str>,
+        bank: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<CaptureRun>> {
+        self.read(|conn| {
+            let runs = conn
+                .prepare(&format!(
+                    "SELECT {RUN_COLUMNS} FROM capture
+                     WHERE (?1 IS NULL OR session_id = ?1) AND (?2 IS NULL OR bank = ?2)
+                     ORDER BY id DESC LIMIT ?3"
+                ))?
+                .query_map(params![session_id, bank, limit.clamp(1, 500)], run)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            runs.into_iter()
+                .map(|run| with_facts(conn, run))
+                .collect::<Result<_>>()
+                .map(Some)
+        })
+        .map(Option::unwrap_or_default)
     }
 
     pub fn fact_edit(&self, fact_id: i64) -> Result<FactEdit> {
@@ -313,30 +305,18 @@ impl Log {
             Option<String>,
             Option<String>,
         );
-        let not_found = || invalid("Memory fact not found");
-        let (capture_id, reverted, path, line, closed_path, before, after): Columns = self.read(
-            || Err(not_found()),
-            |conn| {
-                conn.query_row(
-                    "SELECT capture_id, reverted, path, line_text, previous_path, previous_before, previous_after
-                     FROM fact WHERE id = ?1",
-                    [fact_id],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                            row.get(6)?,
-                        ))
-                    },
-                )
-                .optional()?
-                .ok_or_else(not_found)
-            },
-        )?;
+        let (capture_id, reverted, path, line, closed_path, before, after): Columns = self
+            .read(|conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT capture_id, reverted, path, line_text, previous_path, previous_before, previous_after
+                         FROM fact WHERE id = ?1",
+                        [fact_id],
+                        |row| Columns::try_from(row),
+                    )
+                    .optional()?)
+            })?
+            .ok_or_else(|| invalid("Memory fact not found"))?;
         let closed = match (closed_path, before, after) {
             (Some(path), Some(before), Some(after)) => Some(ClosedLine {
                 path,
@@ -373,17 +353,14 @@ impl Log {
     }
 
     pub fn cursor(&self, session_id: &str) -> Result<Option<u64>> {
-        self.read(
-            || Ok(None),
-            |conn| {
-                Ok(conn
-                    .query_row(
-                        "SELECT seq FROM cursor WHERE session_id = ?1",
-                        [session_id],
-                        |row| row.get::<_, u64>(0),
-                    )
-                    .optional()?)
-            },
-        )
+        self.read(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT seq FROM cursor WHERE session_id = ?1",
+                    [session_id],
+                    |row| row.get::<_, u64>(0),
+                )
+                .optional()?)
+        })
     }
 }

@@ -6,10 +6,9 @@ use std::{borrow::Cow, sync::Arc};
 use async_trait::async_trait;
 use axo_agent::{ExecutionMode, Replay, Tool, ToolContext, ToolError, ToolOutput};
 use axo_ai::{ToolCall, UserBlock};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{Banks, Guard, Memory, Result, SearchRequest, invalid, links::Direction};
+use crate::{Banks, Direction, Guard, Memory, Result, SearchRequest};
 
 const DESCRIPTION: &str = "Search long-term memory notes by keywords and meaning. Each result gives the note's memory:// path and the notes it links to (→) and from (←); read and edit notes through those paths.";
 
@@ -76,24 +75,6 @@ fn parameters() -> Value {
     })
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SearchArgs {
-    query: String,
-    #[serde(default)]
-    types: Vec<String>,
-    #[serde(default)]
-    categories: Vec<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    path: Option<String>,
-    after: Option<String>,
-    valid_at: Option<String>,
-    #[serde(default)]
-    all_banks: bool,
-    limit: Option<usize>,
-}
-
 #[async_trait]
 impl Tool for SearchTool {
     fn name(&self) -> &str {
@@ -126,35 +107,8 @@ impl Tool for SearchTool {
 
 impl SearchTool {
     async fn run(&self, value: Value) -> Result<ToolOutput> {
-        let args: SearchArgs = serde_json::from_value(value)?;
-        if !args
-            .types
-            .iter()
-            .all(|t| matches!(t.as_str(), "entity" | "observation" | "relation"))
-        {
-            return Err(invalid("Invalid memory row type"));
-        }
-        let limit = args.limit.unwrap_or(10);
-        if !(1..=50).contains(&limit) {
-            return Err(invalid("limit must be between 1 and 50"));
-        }
-        let hits = self
-            .memory
-            .search(
-                &self.banks,
-                SearchRequest {
-                    query: args.query,
-                    types: args.types,
-                    categories: args.categories,
-                    tags: args.tags,
-                    path: args.path,
-                    after: args.after,
-                    valid_at: args.valid_at,
-                    all_banks: args.all_banks,
-                    limit,
-                },
-            )
-            .await?;
+        let request: SearchRequest = serde_json::from_value(value)?;
+        let hits = self.memory.search(&self.banks, request).await?;
         let text = if hits.is_empty() {
             "No matching notes.".into()
         } else {

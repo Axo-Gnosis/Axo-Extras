@@ -38,7 +38,7 @@ pub(crate) fn heading(line: &str) -> Option<(usize, &str)> {
     }
     Some((n, s[n..].trim().trim_end_matches('#').trim_end()))
 }
-pub(crate) fn section_range(text: &str, name: &str) -> Result<std::ops::Range<usize>> {
+fn section_range(text: &str, name: &str) -> Result<std::ops::Range<usize>> {
     let body = writable(text)?;
     let mut offset = body;
     let mut found = None;

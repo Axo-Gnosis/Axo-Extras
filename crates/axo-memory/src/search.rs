@@ -10,14 +10,12 @@ pub struct SearchQuery<'a> {
     pub query_embedding: Option<&'a [f32]>,
     pub embed_model: &'a str,
     pub row_types: &'a [&'a str],
-    pub note_types: &'a [String],
     pub categories: &'a [String],
     pub tags: &'a [String],
     pub path_prefix: Option<&'a str>,
     pub after: Option<&'a str>,
     pub valid_at: Option<&'a str>,
     pub limit: usize,
-    pub offset: usize,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +34,6 @@ pub struct SearchHit {
 }
 struct Candidate {
     hit: SearchHit,
-    note_type: String,
     tags: Vec<String>,
     updated: String,
     time: Option<temporal::TimeRange>,
@@ -49,15 +46,24 @@ fn candidate(
     snippet: String,
     score: f32,
 ) -> Result<Option<Candidate>> {
-    let Some((bank_id, title, note_type, permalink, file_path, tags, updated)) = index.conn.query_row(
-        "SELECT bank_id,title,note_type,permalink,file_path,tags,updated_at FROM entity WHERE id=?",
-        [entity],
-        |r| Ok((
-            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-            r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
-            r.get::<_, String>(6)?,
-        )),
-    ).optional()? else {
+    let Some((bank_id, title, permalink, file_path, tags, updated)) = index
+        .conn
+        .query_row(
+            "SELECT bank_id,title,permalink,file_path,tags,updated_at FROM entity WHERE id=?",
+            [entity],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .optional()?
+    else {
         return Ok(None);
     };
     let mut tags: Vec<String> = serde_json::from_str(&tags)?;
@@ -87,7 +93,6 @@ fn candidate(
             score,
             line,
         },
-        note_type,
         tags,
         updated,
         time,
@@ -96,7 +101,6 @@ fn candidate(
 fn allowed(c: &Candidate, q: &SearchQuery<'_>) -> bool {
     q.bank_ids.contains(&c.hit.bank_id)
         && (q.row_types.is_empty() || q.row_types.contains(&c.hit.row_type.as_str()))
-        && (q.note_types.is_empty() || q.note_types.contains(&c.note_type))
         && (q.categories.is_empty()
             || c.hit
                 .category
@@ -263,7 +267,7 @@ pub fn search(index: &Index, q: &SearchQuery<'_>) -> Result<Vec<SearchHit>> {
     vectors.truncate(100);
     let mut hits = fuse(fts, vectors);
     sort(&mut hits);
-    Ok(hits.into_iter().skip(q.offset).take(q.limit).collect())
+    Ok(hits.into_iter().take(q.limit).collect())
 }
 fn sort(hits: &mut [SearchHit]) {
     hits.sort_by(|a, b| {

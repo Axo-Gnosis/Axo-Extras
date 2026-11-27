@@ -11,8 +11,7 @@ pub enum Direction {
     Incoming,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub struct Neighbor {
     pub entity_id: i64,
     pub relation_type: String,

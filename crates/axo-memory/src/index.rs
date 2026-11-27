@@ -5,7 +5,6 @@ use crate::{
     temporal::{TimeKind, TimeRange},
 };
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -14,16 +13,13 @@ const SCHEMA_VERSION: i32 = 1;
 pub struct Index {
     pub(crate) conn: Connection,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Entity {
-    pub id: i64,
     pub bank_id: i64,
     pub title: String,
-    pub note_type: String,
-    pub permalink: String,
     pub file_path: String,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct LocatedObservation {
     pub entity: Entity,
     pub observation: Observation,
@@ -73,16 +69,6 @@ impl Index {
         }
         Ok(Self { conn })
     }
-    pub fn bank_id(&self, dir: &Path) -> Result<Option<i64>> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT id FROM bank WHERE path=?",
-                [bank_path(dir)?.to_string_lossy().as_ref()],
-                |r| r.get(0),
-            )
-            .optional()?)
-    }
     pub fn upsert_bank(&self, dir: &Path) -> Result<i64> {
         let p = bank_path(dir)?;
         self.conn.execute(
@@ -106,25 +92,17 @@ impl Index {
         Ok(self
             .conn
             .query_row(
-                "SELECT id,bank_id,title,note_type,permalink,file_path FROM entity WHERE id=?",
+                "SELECT bank_id,title,file_path FROM entity WHERE id=?",
                 [id],
                 |r| {
                     Ok(Entity {
-                        id: r.get(0)?,
-                        bank_id: r.get(1)?,
-                        title: r.get(2)?,
-                        note_type: r.get(3)?,
-                        permalink: r.get(4)?,
-                        file_path: r.get(5)?,
+                        bank_id: r.get(0)?,
+                        title: r.get(1)?,
+                        file_path: r.get(2)?,
                     })
                 },
             )
             .optional()?)
-    }
-    pub fn observations(&self, entity_id: i64) -> Result<Vec<Observation>> {
-        let mut stmt=self.conn.prepare("SELECT category,content,tags,context,time_kind,time_lower,time_upper,line FROM observation WHERE entity_id=? ORDER BY line")?;
-        let rows = stmt.query_map([entity_id], observation_row)?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
     pub fn observation(&self, id: i64) -> Result<Option<LocatedObservation>> {
         match self.observation_with_entity(id)? {

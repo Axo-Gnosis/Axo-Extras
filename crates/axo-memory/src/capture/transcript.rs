@@ -15,8 +15,9 @@ pub(crate) struct Chunk {
     pub seq: u64,
 }
 
-/// A message's text blocks, without thinking, tool calls or images.
-pub(crate) fn message_text(message: &Message) -> impl Iterator<Item = &str> {
+/// A user or assistant message's text blocks joined by newlines, without thinking,
+/// tool calls or images; empty for other roles.
+pub(super) fn message_text(message: &Message) -> String {
     let (user, assistant) = match message {
         Message::User(user) => (Some(user), None),
         Message::Assistant(assistant) => (None, Some(assistant)),
@@ -37,6 +38,8 @@ pub(crate) fn message_text(message: &Message) -> impl Iterator<Item = &str> {
                     AssistantBlock::Thinking { .. } | AssistantBlock::ToolCall(_) => None,
                 }),
         )
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The chunks of `entries` after `cursor`, and the last sequence number when it moved
@@ -99,7 +102,7 @@ pub(crate) fn transcript(
             Message::Assistant(_) => "assistant",
             _ => continue,
         };
-        let content = message_text(message).collect::<Vec<_>>().join("\n");
+        let content = message_text(message);
         if content.trim().is_empty() {
             continue;
         }

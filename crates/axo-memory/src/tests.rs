@@ -73,7 +73,7 @@ fn sync_lifecycle() {
     let bank = tmp.path().join("bank");
     put(&bank, "A.md", "- [fact] original\n");
     assert_eq!(sync_bank(&mut index, &bank).unwrap().added, 1);
-    let bank_id = index.bank_id(&bank).unwrap().unwrap();
+    let bank_id = index.upsert_bank(&bank).unwrap();
     let id = links::resolve(&index, bank_id, "A").unwrap().unwrap();
     assert!(!sync_bank(&mut index, &bank).unwrap().has_changes());
     put(&bank, "A.md", "- [fact] changed content\n");
@@ -103,7 +103,7 @@ fn forward_link() {
     let bank = tmp.path().join("bank");
     put(&bank, "A.md", "- depends_on [[B]]\n");
     sync_bank(&mut index, &bank).unwrap();
-    let b = index.bank_id(&bank).unwrap().unwrap();
+    let b = index.upsert_bank(&bank).unwrap();
     let a = links::resolve(&index, b, "A").unwrap().unwrap();
     assert!(
         links::neighbors(&index, a, &|_, _| Ok(None))
@@ -135,7 +135,7 @@ fn permalinks_stay_unique() {
     put(&bank, "my_note.md", "second\n");
     put(&bank, "C.md", "---\npermalink: my-note\n---\nthird\n");
     sync_bank(&mut index, &bank).unwrap();
-    let b = index.bank_id(&bank).unwrap().unwrap();
+    let b = index.upsert_bank(&bank).unwrap();
     let path_of = |index: &Index, slug| {
         let id = links::resolve(index, b, slug).unwrap().unwrap();
         index.entity(id).unwrap().unwrap().file_path
@@ -160,7 +160,7 @@ fn fusion_ordering() {
     put(&bank, "Keyword.md", "- [fact] needle\n");
     put(&bank, "Vector.md", "- [fact] unrelated\n");
     sync_bank(&mut index, &bank).unwrap();
-    let b = index.bank_id(&bank).unwrap().unwrap();
+    let b = index.upsert_bank(&bank).unwrap();
     let both = links::resolve(&index, b, "Both").unwrap().unwrap();
     let vector = links::resolve(&index, b, "Vector").unwrap().unwrap();
     let mut embedding = vec![0.0; DIM];
@@ -201,7 +201,7 @@ fn relaxed_keyword_query_ignores_stopwords() {
     put(&bank, "B.md", "- [fact] B is the storage layer\n");
     put(&bank, "Bun.md", "- [fact] Bun is our JavaScript runtime\n");
     sync_bank(&mut index, &bank).unwrap();
-    let b = index.bank_id(&bank).unwrap().unwrap();
+    let b = index.upsert_bank(&bank).unwrap();
     let titles = |text| {
         search::search(
             &index,
@@ -233,7 +233,7 @@ fn close_and_valid_at() {
     assert_eq!(edit::close_observation(&closed, 2, "2026-11-23"), closed);
     put(&bank, "A.md", &closed);
     sync_bank(&mut index, &bank).unwrap();
-    let b = index.bank_id(&bank).unwrap().unwrap();
+    let b = index.upsert_bank(&bank).unwrap();
     for (at, count) in [("2026-11-21", 1), ("2026-11-22", 0)] {
         let hits = search::search(
             &index,
@@ -273,7 +273,7 @@ fn links_follow_their_text() {
     put(&bank, "A.md", "- depends_on [[B]]\n");
     put(&bank, "B.md", "first\n");
     sync_bank(&mut index, &bank).unwrap();
-    let bank_id = index.bank_id(&bank).unwrap().unwrap();
+    let bank_id = index.upsert_bank(&bank).unwrap();
     let a = links::resolve(&index, bank_id, "A").unwrap().unwrap();
     let old = links::neighbors(&index, a, &|_, _| Ok(None)).unwrap()[0].entity_id;
     fs::rename(bank.join("B.md"), bank.join("Old.md")).unwrap();
