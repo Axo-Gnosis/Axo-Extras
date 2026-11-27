@@ -1,6 +1,6 @@
 # Axo-Extras
 
-Optional capabilities for [axo](https://git.ryot.foo/toph/axo) hosts, kept out of axo's core. A host embeds only the crates it wants.
+Optional capabilities for [axo](https://git.ryot.foo/toph/axo) hosts, kept out of axo's core. These are features worth having that not every host wants, or wants done this way. Each crate is built only on axo's public API, to axo's engineering standards, and assumes nothing about its host ([Axome](https://github.com/tophc7/Axome) is one consumer). A host embeds only the crates it wants.
 
 | Crate | What it adds |
 |---|---|
