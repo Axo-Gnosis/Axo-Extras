@@ -1,6 +1,6 @@
 # Axo-Extras
 
-Optional, host-agnostic capabilities for axo hosts that stay out of axo's core: subscription providers, local model files, and predictive text.
+Optional, host-agnostic capabilities for axo hosts that stay out of axo's core: subscription providers, local model files, predictive text, and long-term memory.
 
 ## The Axo Family
 
@@ -35,11 +35,11 @@ Axophyte ("Axo") may also be the persona you are running as. Its instructions go
 ## Living Documentation
 
 - **README.md**: the crate table, provider registration, versioning, and checks. Update it with every crate, API, or behavior change.
-- **crates/<crate>/README.md**: the reference for a crate that needs more than a table row (currently axo-predict).
+- **crates/<crate>/README.md**: the reference for a crate that needs more than a table row (currently axo-predict and axo-memory).
 
 ## Versioning
 
-The axo-ai git rev in Cargo.toml must equal the host's axo rev; bump both together. The candle-core patch must be mirrored by every host that uses axo-predict. See README.md for both and for developing against a local axo checkout.
+The one git rev of axo, axo-agent and axo-ai in Cargo.toml must equal the host's axo rev; bump both together. rusqlite must equal the host's version (two bundled SQLite copies do not link). The candle-core patch must be mirrored by every host that uses axo-predict or axo-memory. See README.md for both and for developing against a local axo checkout.
 
 ## Development
 

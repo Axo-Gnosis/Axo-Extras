@@ -1,0 +1,6 @@
+axo-memory is licensed under the GNU Affero General Public License, version 3 or
+any later version (see LICENSE). The rest of Axo-Extras is MIT.
+
+src/{edit,format,index,links,permalink,search,sync,temporal}.rs are ported from
+Basic Memory (https://github.com/basicmachines-co/basic-memory), commit 7a1ff5f,
+which is licensed AGPL-3.0-or-later.
