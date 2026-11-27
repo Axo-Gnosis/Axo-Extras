@@ -7,7 +7,7 @@ Optional, host-agnostic capabilities for axo hosts that stay out of axo's core: 
 Shared by the AGENTS.md of axo, Axo-Extras, Axome, and Axophyte; change all four together.
 
 - **axo**: the embeddable agent-harness library. It owns harness architecture and the public API every host builds on, designed for any host, never one.
-- **Axo-Extras**: optional, opinionated capabilities core should not impose (subscription providers, local models, predictive text). Host-agnostic, built only on axo's public API to axo's standard; each host adopts, ignores, or replaces each crate.
+- **Axo-Extras**: optional, opinionated capabilities core should not impose. Host-agnostic, built only on axo's public API to axo's standard; each host adopts, ignores, or replaces each crate.
 - **Axome**: Toph's desktop host. It proves axo's surface and exposes its gaps; its product choices never define axo or Extras.
 - **Axophyte**: Toph's personal persona, workflows, and extensions. It inspires ideas but has no bearing on the engineering of the others.
 
@@ -39,7 +39,7 @@ Axophyte ("Axo") may also be the persona you are running as. Its instructions go
 
 ## Versioning
 
-The one git rev of axo, axo-agent and axo-ai in Cargo.toml must equal the host's axo rev; bump both together. rusqlite must equal the host's version (two bundled SQLite copies do not link). The candle-core patch must be mirrored by every host that uses axo-predict or axo-memory. See README.md for both and for developing against a local axo checkout.
+Three pins must match the host: the axo git rev, the rusqlite version, and the candle-core patch. README.md "Versioning" has the rules and the local-axo setup.
 
 ## Development
 

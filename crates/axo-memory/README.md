@@ -15,7 +15,7 @@ One `Memory` owns everything under the root the host passes to `Memory::open(roo
 | `banks/<name>/` | A bank's notes, unless the host puts the bank elsewhere (`default_bank_dir(name)`). |
 | `writer/` | The working directory of writer sessions. Their journals are deleted after each chunk. |
 
-No file is created until it is first written. Open each root once per process: opening the capture log marks runs it finds unfinished as interrupted.
+Opening touches no files. `index.db` is created by the first search or count; `captures.db` when a capture first records a run or a cursor. Open each root once per process: opening the capture log marks runs it finds unfinished as interrupted.
 
 ## Host contract
 
@@ -36,9 +36,15 @@ No file is created until it is first written. Open each root once per process: o
   loop {
       memory.embedding_wanted().await;
       let memory = memory.clone();
-      tokio::task::spawn_blocking(move || while memory.embed_pending()? {} Ok(())).await??;
+      tokio::task::spawn_blocking(move || {
+          while memory.embed_pending()? {}
+          Ok::<_, axo_memory::Error>(())
+      })
+      .await??;
   }
   ```
+
+  Here `?` ends the loop on the first error; a host that wants to keep going logs it instead.
 
 - **Capture.** Call `memory.capture(&axo, CaptureRequest { … })` whenever a session should be read (on close, after compaction). It reads only what the session gained since its last capture, so repeated calls are safe; forks skip the history they copied, and child sessions and writer sessions are refused. `writer_agent()` is the bundled writer; set its `model` or pass your own spec. Captures run one at a time per `Memory`. `host` is stored with the run and returned as `CaptureRun::host`. List runs with `captures`, undo one fact with `revert_fact`.
 
@@ -54,4 +60,4 @@ Everything stays on the machine. Notes, the index, the capture log and writer wo
 
 ## Attribution
 
-`src/{edit,format,index,links,permalink,search,sync,temporal}.rs` are ported from [Basic Memory](https://github.com/basicmachines-co/basic-memory) at commit `7a1ff5f` (AGPL-3.0-or-later). BAAI/bge-small-en-v1.5 is MIT by BAAI.
+Parts of the crate are ported from [Basic Memory](https://github.com/basicmachines-co/basic-memory) (AGPL-3.0-or-later); `NOTICE` lists the files and the upstream commit. BAAI/bge-small-en-v1.5 is MIT by BAAI.

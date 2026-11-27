@@ -15,35 +15,36 @@ axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6
 axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
 axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
 # Versions and features match axo's `[workspace.dependencies]`.
-anyhow = "1.0"
 async-trait = "0.1.92"
 base64 = "0.23.1"
-# candle and tokenizers match Axome's, or the host builds two of each.
-candle-core = "0.11"
-candle-nn = "0.11"
-candle-transformers = "0.11"
-# axo-memory only. chrono: the ported library's date handling. rusqlite must equal the
-# host's version: two bundled SQLite copies do not link.
-chrono = "0.4"
-regex = "1.13.1"
-rusqlite = { version = "0.33", features = ["bundled"] }
-serde_norway = "0.9.42"
-thiserror = "2.0.21"
-unicode-normalization = "0.1.26"
-walkdir = "2"
 futures = "0.3.34"
 jiff = "0.2.38"
 rand = "0.10.3"
+regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "json", "http2", "form"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_norway = "0.9.42"
 sha2 = "0.11.1"
 tempfile = "3.27.0"
-tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
-tokio-util = "0.7.20"
+thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util", "io-std", "process"] }
+tokio-util = "0.7.20"
 tracing = "0.1.44"
+unicode-normalization = "0.1.26"
 url = "2.5.8"
+# Not in axo.
+anyhow = "1.0"
+# candle and tokenizers match the host's, or the host builds two of each.
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+# The ported library's date handling.
+chrono = "0.4"
+# Must equal the host's version: two bundled SQLite copies do not link.
+rusqlite = { version = "0.33", features = ["bundled"] }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+walkdir = "2"
 zstd = "0.13"
 
 [workspace.lints.rust]
