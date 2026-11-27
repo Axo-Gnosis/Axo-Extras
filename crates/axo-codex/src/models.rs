@@ -312,7 +312,11 @@ fn codex_model(row: CodexRow, catalog: &[std::sync::Arc<Model>], extended_contex
             .collect(),
         context_window: row.context_window,
         max_tokens: MAX_TOKENS,
-        compat: Compat::default(),
+        // The prompt goes out as a leading developer item; later prompt changes follow in place.
+        compat: Compat {
+            supports_mid_convo_system_messages: Some(true),
+            ..Compat::default()
+        },
     };
     if !extended_context {
         cap_at_price_tier(&mut model);

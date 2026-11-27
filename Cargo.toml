@@ -10,7 +10,7 @@ repository = "https://git.ryot.foo/toph/Axo-Extras"
 
 [workspace.dependencies]
 # The rev must equal the host's axo rev, or Cargo builds two `axo-ai` crates.
-axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
+axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
 # Versions and features match axo's `[workspace.dependencies]`.
 anyhow = "1.0"
 async-trait = "0.1.92"
