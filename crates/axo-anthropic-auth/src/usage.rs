@@ -130,7 +130,7 @@ fn report(usage: &Value, profile: &Value) -> AccountUsage {
             .and_then(Value::as_str)
             .map(str::to_owned),
         limits,
-        fetched_at: None,
+        ..Default::default()
     }
 }
 

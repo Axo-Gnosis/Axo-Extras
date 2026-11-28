@@ -104,7 +104,7 @@ fn report(body: &Value, account: Option<String>, now: i64) -> AccountUsage {
         plan: body["plan_type"].as_str().map(str::to_owned),
         account,
         limits,
-        fetched_at: None,
+        ..Default::default()
     }
 }
 
