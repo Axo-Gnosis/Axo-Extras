@@ -11,9 +11,9 @@ repository = "https://git.ryot.foo/toph/Axo-Extras"
 [workspace.dependencies]
 # The rev of `axo`, `axo-agent` and `axo-ai` must equal the host's axo rev, or Cargo builds
 # two copies of each.
-axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
-axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
-axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
+axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "65bd2ab415e0ec58aef89795c1f84e756625e45a" }
+axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "65bd2ab415e0ec58aef89795c1f84e756625e45a" }
+axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "65bd2ab415e0ec58aef89795c1f84e756625e45a" }
 # Versions and features match axo's `[workspace.dependencies]`.
 async-trait = "0.1.92"
 base64 = "0.23.1"
